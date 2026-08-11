@@ -3,6 +3,7 @@ package fr.skytasul.music;
 import com.xxmicloxx.NoteBlockAPI.model.Song;
 import fr.skytasul.music.utils.Database;
 import fr.skytasul.music.utils.Database.JBStatement;
+import fr.skytasul.music.utils.FoliaCompat;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import java.sql.PreparedStatement;
@@ -84,7 +85,7 @@ public class JukeBoxDatas {
 		}else {
 			PlayerData pdata = PlayerData.create(id);
 			players.put(id, pdata);
-			Bukkit.getScheduler().runTaskAsynchronously(JukeBox.getInstance(), () -> {
+			FoliaCompat.runAsync(JukeBox.getInstance(), () -> {
 				synchronized (getStatement) {
 					try {
 						PreparedStatement statement = getStatement.getStatement();
@@ -104,7 +105,10 @@ public class JukeBoxDatas {
 					}catch (SQLException e) {
 						e.printStackTrace();
 					}
-					pdata.playerJoin(p, !JukeBox.worlds || JukeBox.worldsEnabled.contains(p.getWorld().getName()));
+					boolean worldEnabled = !JukeBox.worlds || JukeBox.worldsEnabled.contains(p.getWorld().getName());
+					FoliaCompat.runAtLocation(p, JukeBox.getInstance(), () -> {
+						pdata.playerJoin(p, worldEnabled);
+					});
 				}
 			});
 		}
@@ -116,35 +120,39 @@ public class JukeBoxDatas {
 		if (pdata != null) {
 			pdata.playerLeave();
 			if (db == null) {
-				if (!JukeBox.canSaveDatas(p)) players.remove(id);
+				boolean canSave = JukeBox.canSaveDatas(p);
+				if (!canSave) players.remove(id);
 			}else {
 				boolean isDefault = pdata.isDefault(JukeBox.defaultPlayer);
 				if (!pdata.created || !isDefault) {
-					Bukkit.getScheduler().runTaskAsynchronously(JukeBox.getInstance(), () -> {
-						if (isDefault) {
-							try (PreparedStatement statement = deleteStatement.getStatement()) {
-								statement.setString(1, id.toString().replace("-", ""));
-								statement.executeUpdate();
-							} catch (SQLException e) {
-								e.printStackTrace();
+					boolean canSave = JukeBox.canSaveDatas(p);
+					if (canSave) {
+						FoliaCompat.runAsync(JukeBox.getInstance(), () -> {
+							if (isDefault) {
+								try (PreparedStatement statement = deleteStatement.getStatement()) {
+									statement.setString(1, id.toString().replace("-", ""));
+									statement.executeUpdate();
+								} catch (SQLException e) {
+									e.printStackTrace();
+								}
+							}else {
+								try (PreparedStatement statement =
+									pdata.created ? insertStatement.getStatement() : updateStatement.getStatement()) {
+									int i = 1;
+									statement.setBoolean(i++, pdata.hasJoinMusic());
+									statement.setBoolean(i++, pdata.isShuffle());
+									statement.setBoolean(i++, pdata.hasParticles());
+									statement.setBoolean(i++, pdata.isRepeatEnabled());
+									statement.setInt(i++, pdata.getVolume());
+									statement.setString(i++, pdata.getFavorites() == null ? "" : pdata.getFavorites().getSongList().stream().map(JukeBox::getInternal).collect(Collectors.joining("|")));
+									statement.setString(i++, id.toString().replace("-", ""));
+									statement.executeUpdate();
+								}catch (SQLException e) {
+									e.printStackTrace();
+								}
 							}
-						}else {
-							try (PreparedStatement statement =
-								pdata.created ? insertStatement.getStatement() : updateStatement.getStatement()) {
-								int i = 1;
-								statement.setBoolean(i++, pdata.hasJoinMusic());
-								statement.setBoolean(i++, pdata.isShuffle());
-								statement.setBoolean(i++, pdata.hasParticles());
-								statement.setBoolean(i++, pdata.isRepeatEnabled());
-								statement.setInt(i++, pdata.getVolume());
-								statement.setString(i++, pdata.getFavorites() == null ? "" : pdata.getFavorites().getSongList().stream().map(JukeBox::getInternal).collect(Collectors.joining("|")));
-								statement.setString(i++, id.toString().replace("-", ""));
-								statement.executeUpdate();
-							}catch (SQLException e) {
-								e.printStackTrace();
-							}
-						}
-					});
+						});
+					}
 				}
 			}
 		}

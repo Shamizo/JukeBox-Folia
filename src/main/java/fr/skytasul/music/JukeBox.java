@@ -27,8 +27,6 @@ import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.player.PlayerTeleportEvent;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.java.JavaPlugin;
-import org.bukkit.scheduler.BukkitRunnable;
-import org.bukkit.scheduler.BukkitTask;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
@@ -93,7 +91,7 @@ public class JukeBox extends JavaPlugin implements Listener{
 	private Database db;
 	public JukeBoxDatas datas;
 
-	private BukkitTask vanillaMusicTask = null;
+	private Object vanillaMusicTask = null;
 	public Consumer<Player> stopVanillaMusic = null;
 
 	@Override
@@ -139,7 +137,10 @@ public class JukeBox extends JavaPlugin implements Listener{
 				e.printStackTrace();
 			}
 		}
-		if (vanillaMusicTask != null) vanillaMusicTask.cancel();
+		if (vanillaMusicTask != null) {
+			FoliaCompat.cancelAsyncTask(vanillaMusicTask);
+			vanillaMusicTask = null;
+		}
 		if (db != null) db.closeConnection();
 		HandlerList.unregisterAll((JavaPlugin) this);
 	}
@@ -200,13 +201,10 @@ public class JukeBox extends JavaPlugin implements Listener{
 		}
 
 		if (async){
-			new BukkitRunnable() {
-				@Override
-				public void run() {
-					loadDatas();
-					finishEnabling();
-				}
-			}.runTaskAsynchronously(this);
+			FoliaCompat.runAsync(this, () -> {
+				loadDatas();
+				FoliaCompat.runGlobal(this, () -> finishEnabling());
+			});
 		}else{
 			loadDatas();
 			finishEnabling();
@@ -229,11 +227,24 @@ public class JukeBox extends JavaPlugin implements Listener{
 		}
 
 		if (stopVanillaMusic != null) {
-			vanillaMusicTask = Bukkit.getScheduler().runTaskTimerAsynchronously(this, () -> {
-				for (PlayerData pdata : datas.getDatas()) {
-					if (pdata.isPlaying() && pdata.getPlayer() != null) stopVanillaMusic.accept(pdata.getPlayer());
-				}
-			}, 20L, 100l); // every 5 seconds
+			if (FoliaCompat.isFolia()) {
+				vanillaMusicTask = FoliaCompat.runGlobalRepeating(this, () -> {
+					for (PlayerData pdata : datas.getDatas()) {
+						if (pdata.isPlaying() && pdata.getPlayer() != null) {
+							Player player = pdata.getPlayer();
+							FoliaCompat.runAtLocation(player, this, () -> {
+								if (player.isOnline()) stopVanillaMusic.accept(player);
+							});
+						}
+					}
+				}, 20L, 100L);
+			} else {
+				vanillaMusicTask = FoliaCompat.runAsyncRepeating(this, () -> {
+					for (PlayerData pdata : datas.getDatas()) {
+						if (pdata.isPlaying() && pdata.getPlayer() != null) stopVanillaMusic.accept(pdata.getPlayer());
+					}
+				}, 20L, 100L);
+			}
 		}
 	}
 
